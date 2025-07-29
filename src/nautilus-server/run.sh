@@ -81,12 +81,34 @@ echo "Traffic redirection rules configured."
 echo "Unrestricted network access configured."
 echo "The enclave can now access any external host via transparent proxying."
 
-# Listens on Local VSOCK Port 3000 and forwards to localhost 3000
-socat VSOCK-LISTEN:3000,reuseaddr,fork TCP:localhost:3000 &
-
 # Set the config path to use the default config file
 export CONFIG_PATH="/config/config.toml"
 
-echo "Script completed."
+echo "Starting nautilus-server..."
 
-/nautilus-server
+# Start nautilus-server in the background
+/nautilus-server &
+SERVER_PID=$!
+
+# Wait for the server to be ready (up to 30 seconds)
+echo "Waiting for nautilus-server to start listening on port 3000..."
+for i in $(seq 1 30); do
+    if busybox netstat -ln | grep -q ":3000 "; then
+        echo "✅ nautilus-server is ready on port 3000"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "❌ Timeout waiting for nautilus-server to start"
+        exit 1
+    fi
+    sleep 1
+done
+
+# Now set up VSOCK listener to forward to the running server
+echo "Setting up VSOCK listener for API access..."
+socat VSOCK-LISTEN:3000,reuseaddr,fork TCP:localhost:3000 &
+
+echo "✅ Script completed. Both nautilus-server and VSOCK listener are running."
+
+# Wait for the server process (keep the container running)
+wait $SERVER_PID
