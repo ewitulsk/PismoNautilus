@@ -12,9 +12,6 @@ show_help() {
     echo "If you change the REGION, you must also supply a valid AMI for that region."
     echo ""
     echo "Pre-requisites:"
-    echo "  - allowed_endpoints.yaml is configured with all necessary endpoints that the enclave needs"
-    echo "    access to. This is necessary since the enclave doesn't not come with Internet connection,"
-    echo "    all traffics needs to be preconfigured for traffic forwarding."
     echo "  - AWS CLI is installed and configured with proper credentials"
     echo "  - The environment variable KEY_PAIR is set (e.g., export KEY_PAIR=my-key)"
     echo "  - The instance type 'm5.xlarge' must be supported in your account/region for Nitro Enclaves"
@@ -88,32 +85,6 @@ fi
 
 FINAL_INSTANCE_NAME="${EC2_INSTANCE_NAME}-${RANDOM_SUFFIX}"
 echo "Instance will be named: $FINAL_INSTANCE_NAME"
-
-
-#########################################
-# Read endpoints from allowed_endpoints.yaml
-#########################################
-if [ -f "src/nautilus-server/allowed_endpoints.yaml" ]; then
-    # Use a small Python snippet to parse the YAML and emit space-separated endpoints
-    ENDPOINTS=$(yq e '.endpoints | join(" ")' src/nautilus-server/allowed_endpoints.yaml 2>/dev/null)
-    if [ -n "$ENDPOINTS" ]; then
-        echo "Endpoints found in src/nautilus-server/allowed_endpoints.yaml (before region patching):"
-        echo "$ENDPOINTS"
-
-        # Replace any existing region (like us-east-1, us-west-2, etc.) in kms.* / secretsmanager.* with the user-provided $REGION.
-        # This way, if $REGION=us-west-2, you'll get kms.us-west-2.amazonaws.com etc.
-        ENDPOINTS=$(echo "$ENDPOINTS" \
-          | sed "s|kms\.[^.]*\.amazonaws\.com|kms.$REGION.amazonaws.com|g" \
-          | sed "s|secretsmanager\.[^.]*\.amazonaws\.com|secretsmanager.$REGION.amazonaws.com|g")
-        echo "Endpoints after region patching:"
-        echo "$ENDPOINTS"
-    else
-        echo "No endpoints found in src/nautilus-server/allowed_endpoints.yaml. Continuing without additional endpoints."
-    fi
-else
-    echo "src/nautilus-server/allowed_endpoints.yaml not found. Continuing without additional endpoints."
-    ENDPOINTS=""
-fi
 
 #########################################
 # Decide about secrets (3 scenarios)
@@ -375,13 +346,6 @@ sudo systemctl start docker && sudo systemctl enable docker
 sudo systemctl enable nitro-enclaves-vsock-proxy.service
 EOF
 
-# Append endpoint configuration to the vsock-proxy YAML if endpoints were provided.
-if [ -n "$ENDPOINTS" ]; then
-    for ep in $ENDPOINTS; do
-        echo "echo \"- {address: $ep, port: 443}\" | sudo tee -a /etc/nitro_enclaves/vsock-proxy.yaml" >> user-data.sh
-    done
-fi
-
 # Continue the user-data script
 cat <<EOF >> user-data.sh
 # Stop the allocator so we can modify its configuration
@@ -398,90 +362,6 @@ sudo systemctl start nitro-enclaves-allocator.service && sudo systemctl enable n
 
 # Restart vsock-proxy processes for various endpoints.
 EOF
-
-# Append additional vsock-proxy commands for each extra endpoint.
-if [ -n "$ENDPOINTS" ]; then
-    PORT=8101
-    for ep in $ENDPOINTS; do
-        echo "vsock-proxy $PORT $ep 443 --config /etc/nitro_enclaves/vsock-proxy.yaml &" >> user-data.sh
-        PORT=$((PORT+1))
-    done
-fi
-
-###################################################################
-# Fix src/nautilus-server/run.sh to add endpoint + forwarders
-###################################################################
-ip=64
-endpoints_config=""
-for ep in $ENDPOINTS; do
-    endpoints_config="${endpoints_config}echo \"127.0.0.${ip}   ${ep}\" >> /etc/hosts"$'\n'
-    ip=$((ip+1))
-done
-
-echo "Adding the following endpoint configuration to src/nautilus-server/run.sh:"
-echo "$endpoints_config"
-
-# Remove any existing endpoint lines (except the first localhost line)
-if [[ "$(uname)" == "Darwin" ]]; then
-    # Remove only the IP mapping lines, preserving comments
-    sed -i '' '/echo "127.0.0.[0-9]*   .*" >> \/etc\/hosts/d' src/nautilus-server/run.sh
-    # Restore the localhost line if it was removed
-    if ! grep -q "echo \"127.0.0.1   localhost\" > /etc/hosts" src/nautilus-server/run.sh; then
-        sed -i '' '/# Add a hosts record/a\
-echo "127.0.0.1   localhost" > /etc/hosts' src/nautilus-server/run.sh
-    fi
-else
-    # Remove only the IP mapping lines, preserving comments
-    sed -i '/echo "127.0.0.[0-9]*   .*" >> \/etc\/hosts/d' src/nautilus-server/run.sh
-    # Restore the localhost line if it was removed
-    if ! grep -q "echo \"127.0.0.1   localhost\" > /etc/hosts" src/nautilus-server/run.sh; then
-        sed -i '/# Add a hosts record/a\echo "127.0.0.1   localhost" > /etc/hosts' src/nautilus-server/run.sh
-    fi
-fi
-
-# Add the new endpoint configuration
-tmp_hosts="/tmp/endpoints_config.txt"
-echo "$endpoints_config" > "$tmp_hosts"
-
-# Insert after the localhost line
-if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' "/echo \"127.0.0.1   localhost\" > \/etc\/hosts/ r $tmp_hosts" src/nautilus-server/run.sh
-else
-    sed -i "/echo \"127.0.0.1   localhost\" > \/etc\/hosts/ r $tmp_hosts" src/nautilus-server/run.sh
-fi
-rm "$tmp_hosts"
-
-ip_forwarder=64
-port_forwarder=8101
-traffic_config=""
-for ep in $ENDPOINTS; do
-    traffic_config="${traffic_config}python3 /traffic_forwarder.py 127.0.0.${ip_forwarder} 443 3 ${port_forwarder} &"$'\n'
-    ip_forwarder=$((ip_forwarder+1))
-    port_forwarder=$((port_forwarder+1))
-done
-
-echo "Adding the following traffic forwarder configuration to src/nautilus-server/run.sh:"
-echo "$traffic_config"
-
-# Remove any existing traffic forwarder lines
-if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' '/python3 \/traffic_forwarder.py/d' src/nautilus-server/run.sh
-else
-    sed -i '/python3 \/traffic_forwarder.py/d' src/nautilus-server/run.sh
-fi
-
-# Add the new traffic forwarder configuration
-tmp_traffic="/tmp/traffic_config.txt"
-echo "$traffic_config" > "$tmp_traffic"
-
-if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' "/# Traffic-forwarder-block/ r $tmp_traffic" src/nautilus-server/run.sh
-else
-    sed -i "/# Traffic-forwarder-block/ r $tmp_traffic" src/nautilus-server/run.sh
-fi
-rm "$tmp_traffic"
-
-echo "updated run.sh"
 
 ############################
 # Create or Use Security Group

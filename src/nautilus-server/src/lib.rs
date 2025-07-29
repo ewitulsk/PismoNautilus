@@ -5,19 +5,16 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::Json;
-use fastcrypto::ed25519::Ed25519KeyPair;
 use serde_json::json;
 
 pub mod app;
 pub mod common;
+pub mod config;
+pub mod state;
+pub mod sui;
+pub mod types;
 
-/// App state, at minimum needs to maintain the ephemeral keypair.  
-pub struct AppState {
-    /// Ephemeral keypair on boot
-    pub eph_kp: Ed25519KeyPair,
-    /// API key when querying api.weatherapi.com
-    pub api_key: String,
-}
+pub use state::AppState;
 
 /// Implement IntoResponse for EnclaveError.
 impl IntoResponse for EnclaveError {
@@ -33,7 +30,8 @@ impl IntoResponse for EnclaveError {
 }
 
 /// Enclave errors enum.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EnclaveError {
+    #[error("Generic error: {0}")]
     GenericError(String),
 }

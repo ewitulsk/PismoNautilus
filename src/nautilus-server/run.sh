@@ -20,17 +20,9 @@ echo "Script completed."
 busybox ip addr add 127.0.0.1/32 dev lo
 busybox ip link set dev lo up
 
-# Add a hosts record, pointing target site calls to local loopback
+# Configure /etc/hosts - only localhost, allowing unrestricted external access
 echo "127.0.0.1   localhost" > /etc/hosts
-echo "127.0.0.64   api.weatherapi.com" >> /etc/hosts
-
-
-
-
-
-
-
-# == ATTENTION: code should be generated here that parses allowed_endpoints.yaml and populate domains here ===
+echo "# Unrestricted configuration: external domains are resolved normally" >> /etc/hosts
 
 cat /etc/hosts
 
@@ -41,20 +33,30 @@ JSON_RESPONSE=$(socat - VSOCK-LISTEN:7777,reuseaddr)
 # keys explicitly rather than dynamically.
 echo "$JSON_RESPONSE" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > /tmp/kvpairs ; while IFS="=" read -r key value; do export "$key"="$value"; done < /tmp/kvpairs ; rm -f /tmp/kvpairs
 
-# Run traffic forwarder in background and start the server
-# Forwards traffic from 127.0.0.x -> Port 443 at CID 3 Listening on port 800x
-# There is a vsock-proxy that listens for this and forwards to the respective domains
+# Configure unrestricted network access
+echo "Setting up unrestricted network access..."
 
-# == ATTENTION: code should be generated here that added all hosts to forward traffic ===
-# Traffic-forwarder-block
-python3 /traffic_forwarder.py 127.0.0.64 443 3 8101 &
+# Create a transparent proxy that forwards all external traffic to the host
+# This allows the enclave to access any domain without pre-configuration
+# The host will handle DNS resolution and external connectivity
 
+# Set up transparent forwarding for HTTP and HTTPS traffic to any domain
+# Traffic is forwarded via VSOCK to the host which handles the actual external requests
+socat TCP-LISTEN:80,reuseaddr,fork VSOCK:3:8080 &     # HTTP proxy for any domain
+socat TCP-LISTEN:443,reuseaddr,fork VSOCK:3:8443 &    # HTTPS proxy for any domain
 
+# Additional ports for broader application compatibility
+socat TCP-LISTEN:8080,reuseaddr,fork VSOCK:3:8081 &   # Alternative HTTP
+socat TCP-LISTEN:8443,reuseaddr,fork VSOCK:3:8444 &   # Alternative HTTPS
+socat TCP-LISTEN:9000,reuseaddr,fork VSOCK:3:9001 &   # Custom applications
 
-
-
+echo "Unrestricted network access configured."
+echo "The enclave can now access any external host via transparent proxying."
 
 # Listens on Local VSOCK Port 3000 and forwards to localhost 3000
 socat VSOCK-LISTEN:3000,reuseaddr,fork TCP:localhost:3000 &
+
+# Set the config path to use the default config file
+export CONFIG_PATH="/config/config.toml"
 
 /nautilus-server

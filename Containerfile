@@ -75,7 +75,7 @@ RUN cp /target/${TARGET}/release/init initramfs
 RUN cp /src/nautilus-server/target/${TARGET}/release/nautilus-server initramfs
 RUN cp /src/nautilus-server/traffic_forwarder.py initramfs/
 RUN cp /src/nautilus-server/run.sh initramfs/
-RUN cp /src/nautilus-server/allowed_endpoints.yaml initramfs/
+RUN cp -r /src/nautilus-server/config initramfs/
 
 RUN <<-EOF
     set -eux

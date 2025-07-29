@@ -47,10 +47,10 @@ When the enclave starts, it generates a fresh enclave key pair and exposes the f
     run.sh          Configures all necessary domains and traffic forwarder, then runs the Rust server inside the enclave.
     app.rs          Replace this with your offchain computation logic.
     common.rs       Common code for getting attestation.
-    allowed_endpoints.yaml  This file lists all endpoints the enclave is allowed to access. By default, the enclave has no internet access unless the parent EC2 instance explicitly forwards traffic. During the configuration step, this file is used to generate the necessary code to enable limited traffic forwarding from the enclave. 
+ 
 ```
 
-As a developer, focus on implementing the Move code in `move/app` and the Rust code in `src/nautilus-server/app.rs`, along with the frontend logic that interacts with the deployed smart contract. You’ll also need to edit `allowed_endpoints.yaml` to include all domains the enclave must access. 
+As a developer, focus on implementing the Move code in `move/app` and the Rust code in `src/nautilus-server/app.rs`, along with the frontend logic that interacts with the deployed smart contract.
 
 The rest of the template can remain largely unmodified. 
 
@@ -83,7 +83,7 @@ sh configure_enclave.sh
 > - Set `KEY_PAIR` to the name of your existing AWS key pair or one you create. To create a key pair, refer to this [guide](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-key-pairs.html)
 > - You may need to create a vpc with a public subnet. Refer to this [guide](https://000058.awsstudygroup.com/2-prerequiste/2.1-createec2/2.1.2-createpublicsubnet/) for instructions.
 
-3. To run this example as-is, you don't need to modify `allowed_endpoints.yaml` since it already includes `api.weatherapi.com`. Follow the prompts to enter the required values. This step demonstrates how to store a secret (an API key) using AWS Secrets Manager, so the secret does not need to be included in the public application code.
+3. Follow the prompts to enter the required values. This step demonstrates how to store a secret (an API key) using AWS Secrets Manager, so the secret does not need to be included in the public application code.
 
 ```shell
 Enter EC2 instance base name: weather # anything you like
@@ -96,7 +96,6 @@ Enter secret value: 045a27812dbe456392913223221306 # this is an example api key,
 4. If completed successfully, changes will be generated in `/src/nautilus-server/run.sh` and `expose_enclave.sh`. Commit these changes, as they are required when building the enclave image.
 
 > [!NOTE]
-> - You can modify `src/nautilus-server/allowed_endpoints.yaml` to add any external domains the enclave needs access to. If you update this file, you’ll need to create a new instance using `configure_enclave.sh`, as the generated code will also change.
 > - You can optionally create a secret to store any sensitive value you don’t want included in the codebase. The secret is passed to the enclave as an environment variable. You can verify newly created secrets or find existing ARNs in the [AWS Secrets Manager console](https://us-east-1.console.aws.amazon.com/secretsmanager/listsecrets?region=<REGION>).
 
 5. Connect to your instance and clone the repository. For detailed instructions, see [Connect to your Linux instance using SSH](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-linux-inst-ssh.html#connect-linux-inst-sshClient) in the AWS documentation.
@@ -128,7 +127,6 @@ curl -H 'Content-Type: application/json' -d '{"payload": { "location": "San Fran
 
 The Nautilus server logic is located in `src/nautilus-server`. To customize the application:
 
-- Update `allowed_endpoints.yaml` for any required domains required by your application.
 - Modify `app.rs` to update the `process_data` endpoint and add new endpoints as needed.
 
 The following files typically do not require modification:
@@ -151,12 +149,12 @@ curl -H 'Content-Type: application/json' -d '{"payload": { "location": "San Fran
 
 ### Troubleshooting
 
-- Traffic forwarder error: Ensure all targeted domains are listed in the `allowed_endpoints.yaml`. The following command can be used to test enclave connectivities to all domains.
+- Test enclave connectivity using the health check endpoint:
 
 ```shell
 curl -H 'Content-Type: application/json' -X GET http://<PUBLIC_IP>:3000/health_check
 
-{"pk":"f343dae1df7f2c4676612368e40bf42878e522349e4135c2caa52bc79f0fc6e2","endpoints_status":{"api.weatherapi.com":true}}
+{"pk":"f343dae1df7f2c4676612368e40bf42878e522349e4135c2caa52bc79f0fc6e2"}
 ```
 
 - Docker is not running: The EC2 instance may still be starting up. Wait a few moments, then try again.
